@@ -1,3 +1,4 @@
+import 'dart:async';  // ✅ TAMBAHKAN INI (untuk Completer & StreamSubscription)
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -8,10 +9,12 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 void main() {
-  runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
-    home: WebViewExample(),
-  ));
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: WebViewExample(),
+    ),
+  );
 }
 
 class WebViewExample extends StatefulWidget {
@@ -24,14 +27,13 @@ class WebViewExample extends StatefulWidget {
 class _WebViewExampleState extends State<WebViewExample> {
   late final WebViewController _controller;
   bool _isLoggingIn = false;
-  
+
   static const platform = MethodChannel('com.asetq.apps/file_chooser');
-  static const String androidClientId = 'YOUR_CLIENT_ID_HERE';
+  static const String androidClientId =
+      '884256332175-ainljh42sjc4uad0l1i6qmmahpadrlns.apps.googleusercontent.com';
   static const String appUrl = 'https://aset.pncr-tech.com/';
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: ['email', 'profile'],
-  );
+  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
 
   @override
   void initState() {
@@ -40,70 +42,92 @@ class _WebViewExampleState extends State<WebViewExample> {
   }
 
   void _initWebView() {
-  final params = WebViewPlatform.instance is WebKitWebViewPlatform
-      ? WebKitWebViewControllerCreationParams(
-          allowsInlineMediaPlayback: true,
-          mediaTypesRequiringUserAction: const {},
-        )
-      : const PlatformWebViewControllerCreationParams();
+    final params = WebViewPlatform.instance is WebKitWebViewPlatform
+        ? WebKitWebViewControllerCreationParams(
+            allowsInlineMediaPlayback: true,
+            mediaTypesRequiringUserAction: const {},
+          )
+        : const PlatformWebViewControllerCreationParams();
 
-  _controller = WebViewController.fromPlatformCreationParams(params)
-    ..setJavaScriptMode(JavaScriptMode.unrestricted)
-    ..setUserAgent('Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36')
-    ..setBackgroundColor(Colors.white)
-    ..loadRequest(Uri.parse(appUrl));
+    _controller = WebViewController.fromPlatformCreationParams(params)
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent('Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36')
+      ..setBackgroundColor(Colors.white)
+      ..loadRequest(Uri.parse(appUrl));
 
-  _controller.addJavaScriptChannel(
-    'FlutterGoogleAuth',
-    onMessageReceived: (JavaScriptMessage message) {
-      debugPrint('📩 Message: ${message.message}');
-      if (message.message == 'trigger_google_login') {
-        _handleGoogleSignIn();
-      }
-    },
-  );
+    _controller.addJavaScriptChannel(
+      'FlutterGoogleAuth',
+      onMessageReceived: (JavaScriptMessage message) {
+        debugPrint('📩 Message: ${message.message}');
+        if (message.message == 'trigger_google_login') {
+          _handleGoogleSignIn();
+        }
+      },
+    );
 
-  // ✅ KUNCI UTAMA: Enable file upload untuk Android
-  if (_controller.platform is AndroidWebViewController) {
-    AndroidWebViewController.enableDebugging(true);
-    final androidController = _controller.platform as AndroidWebViewController;
-    androidController.setMediaPlaybackRequiresUserGesture(false);
-    
-    // ✅ INI YANG PALING PENTING - Set File Chooser
-    androidController.setOnShowFileSelector(_androidFilePicker);
+    // ✅ Enable file upload untuk Android
+    if (_controller.platform is AndroidWebViewController) {
+      AndroidWebViewController.enableDebugging(true);
+      final androidController = _controller.platform as AndroidWebViewController;
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+      
+      // ✅ Set File Chooser Handler
+      androidController.setOnShowFileSelector(_androidFilePicker);
+    }
   }
-}
 
-// ✅ TAMBAHKAN METHOD INI (di luar _initWebView)
-Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
-  try {
-    // Request permissions dulu
-    await platform.invokeMethod('checkPermissions');
+  // ✅ File Picker Handler
+  Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
+    debugPrint('🎯 File picker called');
     
-    // Tunggu sebentar untuk permissions
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    // Panggil native file chooser
-    await platform.invokeMethod('openFileChooser');
-    
-    // Return empty list (native code akan handle hasilnya)
-    return [];
-  } catch (e) {
-    debugPrint('❌ File picker error: $e');
-    return [];
+    try {
+      final completer = Completer<List<String>>();
+      
+      // Setup listener untuk hasil dari native
+      const eventChannel = EventChannel('com.asetq.apps/file_result');
+      StreamSubscription? subscription;
+      
+      subscription = eventChannel.receiveBroadcastStream().listen((result) {
+        debugPrint('📥 Received result: $result');
+        if (result is String && result.isNotEmpty) {
+          completer.complete([result]);
+        } else {
+          completer.complete([]);
+        }
+        subscription?.cancel();
+      });
+      
+      // Trigger native file picker
+      await platform.invokeMethod('openFileChooser');
+      
+      // Tunggu hasil (timeout 60 detik)
+      final result = await completer.future.timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          subscription?.cancel();
+          return [];
+        },
+      );
+      
+      debugPrint('✅ File picker result: $result');
+      return result;
+      
+    } catch (e) {
+      debugPrint('❌ File picker error: $e');
+      return [];
+    }
   }
-}
 
   Future<void> _handleGoogleSignIn() async {
     if (_isLoggingIn) return;
     setState(() => _isLoggingIn = true);
-    
+
     debugPrint('🚀 Starting Google Sign In...');
 
     try {
       await _googleSignIn.signOut();
       final account = await _googleSignIn.signIn();
-      
+
       if (account == null) {
         debugPrint('❌ User cancelled');
         setState(() => _isLoggingIn = false);
@@ -121,7 +145,6 @@ Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
       };
 
       await _loginToBackend(userInfo);
-      
     } catch (e) {
       debugPrint('❌ Error: $e');
       _showError('Login gagal: $e');
@@ -137,12 +160,12 @@ Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
     );
 
     request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
-    
+
     final body = 'email=${Uri.encodeComponent(user['email'])}'
         '&name=${Uri.encodeComponent(user['name'])}'
         '&sub=${Uri.encodeComponent(user['sub'])}'
         '&picture=${Uri.encodeComponent(user['picture'])}';
-    
+
     request.write(body);
 
     final response = await request.close();

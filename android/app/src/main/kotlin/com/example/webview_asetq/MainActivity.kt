@@ -8,12 +8,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.webkit.ValueCallback
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.IOException
@@ -22,20 +22,21 @@ import java.util.*
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.asetq.apps/file_chooser"
+    private val EVENT_CHANNEL = "com.asetq.apps/file_result"
     private val FILE_CHOOSER_REQUEST = 1
     private val PERMISSION_REQUEST = 100
     
-    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var eventSink: EventChannel.EventSink? = null
     private var cameraPhotoPath: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
+        // Method Channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "openFileChooser" -> {
-                    val callback = call.argument<String>("callback")
-                    openFileChooser(callback)
+                    openFileChooser()
                     result.success(null)
                 }
                 "checkPermissions" -> {
@@ -45,15 +46,26 @@ class MainActivity: FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        
+        // Event Channel untuk return result
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    eventSink = events
+                }
+                override fun onCancel(arguments: Any?) {
+                    eventSink = null
+                }
+            }
+        )
     }
 
-    private fun openFileChooser(callbackId: String?) {
+    private fun openFileChooser() {
         if (!checkPermissions()) {
             checkAndRequestPermissions()
             return
         }
 
-        // ✅ PERBAIKAN: Gunakan var instead of val, dan make nullable
         var takePictureIntent: Intent? = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         var photoFile: File? = null
         
@@ -73,7 +85,6 @@ class MainActivity: FlutterActivity() {
             )
             takePictureIntent?.putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
         } else {
-            // ✅ PERBAIKAN: Set to null properly
             takePictureIntent = null
         }
 
@@ -81,7 +92,6 @@ class MainActivity: FlutterActivity() {
         contentSelectionIntent.addCategory(Intent.CATEGORY_OPENABLE)
         contentSelectionIntent.type = "image/*"
 
-        // ✅ PERBAIKAN: Handle nullable dengan benar
         val intentArray: Array<Intent> = if (takePictureIntent != null) {
             arrayOf(takePictureIntent)
         } else {
@@ -144,27 +154,30 @@ class MainActivity: FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         
         if (requestCode == FILE_CHOOSER_REQUEST) {
-            if (filePathCallback == null) return
-
-            var results: Array<Uri>? = null
+            var resultUri: String? = null
 
             if (resultCode == Activity.RESULT_OK) {
                 if (data == null || data.data == null) {
-                    // Camera
+                    // Camera - gunakan photo path yang sudah disimpan
                     if (cameraPhotoPath != null) {
-                        results = arrayOf(Uri.parse(cameraPhotoPath))
+                        resultUri = cameraPhotoPath
+                        println("✅ Camera result: $resultUri")
                     }
                 } else {
                     // Gallery
-                    val dataString = data.dataString
-                    if (dataString != null) {
-                        results = arrayOf(Uri.parse(dataString))
-                    }
+                    resultUri = data.data.toString()
+                    println("✅ Gallery result: $resultUri")
                 }
             }
 
-            filePathCallback?.onReceiveValue(results)
-            filePathCallback = null
+            // Kirim result ke Flutter via EventChannel
+            if (resultUri != null) {
+                eventSink?.success(resultUri)
+                println("📤 Sending to Flutter: $resultUri")
+            } else {
+                eventSink?.success("")
+                println("❌ No file selected")
+            }
         }
     }
 
@@ -176,7 +189,9 @@ class MainActivity: FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST) {
             if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                // Permissions granted
+                println("✅ Permissions granted")
+            } else {
+                println("❌ Permissions denied")
             }
         }
     }
