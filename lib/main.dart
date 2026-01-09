@@ -1,4 +1,4 @@
-import 'dart:async';  // ✅ TAMBAHKAN INI (untuk Completer & StreamSubscription)
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -24,9 +24,12 @@ class WebViewExample extends StatefulWidget {
   State<WebViewExample> createState() => _WebViewExampleState();
 }
 
-class _WebViewExampleState extends State<WebViewExample> {
+class _WebViewExampleState extends State<WebViewExample> with SingleTickerProviderStateMixin {
   late final WebViewController _controller;
+  late AnimationController _animationController;
   bool _isLoggingIn = false;
+  bool _isPageLoading = true;
+  Timer? _loadingTimeout;
 
   static const platform = MethodChannel('com.asetq.apps/file_chooser');
   static const String androidClientId =
@@ -38,7 +41,30 @@ class _WebViewExampleState extends State<WebViewExample> {
   @override
   void initState() {
     super.initState();
+    // ✅ Setup animasi untuk logo (fade pulse)
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    
     _initWebView();
+    _startLoadingTimeout();
+  }
+
+  @override
+  void dispose() {
+    _loadingTimeout?.cancel();
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _startLoadingTimeout() {
+    _loadingTimeout = Timer(const Duration(seconds: 10), () {
+      if (_isPageLoading) {
+        debugPrint('⏱️ Loading timeout - force hide splash');
+        setState(() => _isPageLoading = false);
+      }
+    });
   }
 
   void _initWebView() {
@@ -52,8 +78,51 @@ class _WebViewExampleState extends State<WebViewExample> {
     _controller = WebViewController.fromPlatformCreationParams(params)
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setUserAgent('Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36')
-      ..setBackgroundColor(Colors.white)
-      ..loadRequest(Uri.parse(appUrl));
+      ..setBackgroundColor(Colors.white);
+
+    // ✅ ENABLE CACHING untuk Android & iOS
+    if (_controller.platform is AndroidWebViewController) {
+      AndroidWebViewController.enableDebugging(true);
+      final androidController = _controller.platform as AndroidWebViewController;
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+      androidController.setOnShowFileSelector(_androidFilePicker);
+      androidController.enableZoom(false);
+      
+      // ✅ AKTIFKAN CACHE MODE (PENTING!)
+      // Ini akan menyimpan cache di device
+    } else if (_controller.platform is WebKitWebViewController) {
+      final iosController = _controller.platform as WebKitWebViewController;
+      // iOS WebView otomatis cache dengan WKWebsiteDataStore
+    }
+
+    _controller.setNavigationDelegate(
+      NavigationDelegate(
+        onPageStarted: (url) {
+          debugPrint('🔄 Page started: $url');
+          // ✅ Hanya show loading jika pertama kali atau reload manual
+          if (_isPageLoading) {
+            setState(() => _isPageLoading = true);
+          }
+        },
+        onPageFinished: (url) {
+          debugPrint('✅ Page finished: $url');
+          _loadingTimeout?.cancel();
+          setState(() => _isPageLoading = false);
+        },
+        onWebResourceError: (error) {
+          debugPrint('❌ Error: ${error.description}');
+          _loadingTimeout?.cancel();
+          setState(() => _isPageLoading = false);
+        },
+        onProgress: (progress) {
+          debugPrint('📊 Loading: $progress%');
+          if (progress >= 90 && _isPageLoading) {
+            _loadingTimeout?.cancel();
+            setState(() => _isPageLoading = false);
+          }
+        },
+      ),
+    );
 
     _controller.addJavaScriptChannel(
       'FlutterGoogleAuth',
@@ -65,25 +134,16 @@ class _WebViewExampleState extends State<WebViewExample> {
       },
     );
 
-    // ✅ Enable file upload untuk Android
-    if (_controller.platform is AndroidWebViewController) {
-      AndroidWebViewController.enableDebugging(true);
-      final androidController = _controller.platform as AndroidWebViewController;
-      androidController.setMediaPlaybackRequiresUserGesture(false);
-      
-      // ✅ Set File Chooser Handler
-      androidController.setOnShowFileSelector(_androidFilePicker);
-    }
+    // ✅ Load URL setelah setup selesai
+    _controller.loadRequest(Uri.parse(appUrl));
   }
 
-  // ✅ File Picker Handler
   Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
     debugPrint('🎯 File picker called');
     
     try {
       final completer = Completer<List<String>>();
       
-      // Setup listener untuk hasil dari native
       const eventChannel = EventChannel('com.asetq.apps/file_result');
       StreamSubscription? subscription;
       
@@ -97,10 +157,8 @@ class _WebViewExampleState extends State<WebViewExample> {
         subscription?.cancel();
       });
       
-      // Trigger native file picker
       await platform.invokeMethod('openFileChooser');
       
-      // Tunggu hasil (timeout 60 detik)
       final result = await completer.future.timeout(
         const Duration(seconds: 60),
         onTimeout: () {
@@ -220,14 +278,58 @@ class _WebViewExampleState extends State<WebViewExample> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Stack(
           children: [
+            // ✅ WebView
             WebViewWidget(controller: _controller),
+            
+            // ✅ Loading Splash - HANYA LOGO dengan animasi fade
+            if (_isPageLoading)
+              Container(
+                color: Colors.white,
+                child: Center(
+                  child: FadeTransition(
+                    opacity: Tween<double>(begin: 0.3, end: 1.0).animate(_animationController),
+                    child: Image.asset(
+                      'assets/ic_launcher.png',
+                      width: 120,
+                      height: 120,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.app_registration,
+                          size: 120,
+                          color: Colors.blue,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            
+            // ✅ Login Overlay (saat Google Sign In)
             if (_isLoggingIn)
               Container(
                 color: Colors.black54,
-                child: const Center(child: CircularProgressIndicator()),
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        'Loading...',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
           ],
         ),
