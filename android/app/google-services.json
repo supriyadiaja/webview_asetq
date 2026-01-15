@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "967780507762",
+    "project_id": "asetq-2026",
+    "storage_bucket": "asetq-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:967780507762:android:69786da8df0de23008a2eb",
+        "android_client_info": {
+          "package_name": "com.asetq_apps"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYkAuN35dDZZI4YZfYJAPbFMCJGTSZJ9Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

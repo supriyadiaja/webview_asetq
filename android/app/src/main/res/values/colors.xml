@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ✅ Notification Color -->
+    <color name="noti_color">#6200EE</color>
+    
+    <!-- ✅ Other colors -->
+    <color name="notification_primary">#6200EE</color>
+    <color name="notification_accent">#03DAC6</color>
+</resources>
