@@ -43,6 +43,15 @@ android {
         main.java.srcDirs += 'src/main/kotlin'
     }
 
+    signingConfigs {
+        debug {
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+            storeFile file(System.properties['user.home'] + '/.android/debug.keystore')
+            storePassword 'android'
+        }
+    }
+
     defaultConfig {
         applicationId "com.asetq_apps"
         minSdkVersion flutter.minSdkVersion
@@ -54,6 +63,9 @@ android {
 
     buildTypes {
         release {
+            signingConfig signingConfigs.debug
+        }
+        debug {
             signingConfig signingConfigs.debug
         }
     }

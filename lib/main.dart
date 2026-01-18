@@ -17,34 +17,21 @@ import 'services/notification_handler.dart';
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-// ✅ Background handler - HANYA untuk logging
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  
-  debugPrint('🔔 ========== BACKGROUND MESSAGE ==========');
+  debugPrint('📩 Background message handler called');
   debugPrint('   Title: ${message.notification?.title}');
-  debugPrint('   Body: ${message.notification?.body}');
-  debugPrint('   Data: ${message.data}');
-  debugPrint('   FCM akan otomatis menampilkan notifikasi');
-  debugPrint('==========================================');
+  debugPrint('   DO NOT show notification here - FCM handles it');
+  // ✅ DO NOT show notification here - it will cause double notification
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  debugPrint('🚀 ========== APP STARTING ==========');
-  
   await Firebase.initializeApp();
-  debugPrint('✅ Firebase initialized');
-  
   await _initializeLocalNotifications();
-  
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  debugPrint('✅ Background handler registered');
-  
-  debugPrint('====================================\n');
-  
+
   runApp(
     const MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -54,52 +41,52 @@ void main() async {
 }
 
 Future<void> _initializeLocalNotifications() async {
-  debugPrint('🔔 Initializing local notifications...');
-  
   const AndroidInitializationSettings androidSettings =
       AndroidInitializationSettings('@mipmap/ic_launcher');
-  
-  const DarwinInitializationSettings iosSettings =
-      DarwinInitializationSettings(
+
+  const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
     requestAlertPermission: true,
     requestBadgePermission: true,
     requestSoundPermission: true,
   );
-  
+
   const InitializationSettings initSettings = InitializationSettings(
     android: androidSettings,
     iOS: iosSettings,
   );
-  
+
   await flutterLocalNotificationsPlugin.initialize(
     initSettings,
     onDidReceiveNotificationResponse: (NotificationResponse response) {
-      debugPrint('🔔 Notification tapped!');
+      debugPrint('🔔 Notification tapped from local notifications');
       debugPrint('   Payload: ${response.payload}');
+      // ✅ This is called when user taps notification
+      // Navigation is handled by FCM listener, not here
     },
   );
-  
+
   if (Platform.isAndroid) {
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
       'asetq_channel',
       'AssetQ Notifications',
       description: 'Notifikasi untuk aplikasi AssetQ',
       importance: Importance.high,
+      playSound: true,
+      enableVibration: true,
     );
-    
+
     await flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-    
-    final granted = await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.requestNotificationsPermission();
-    
-    debugPrint('📱 Notification permission granted: $granted');
   }
-  
-  debugPrint('✅ Local notifications initialized with channel');
 }
 
 class WebViewExample extends StatefulWidget {
@@ -109,22 +96,21 @@ class WebViewExample extends StatefulWidget {
   State<WebViewExample> createState() => _WebViewExampleState();
 }
 
-class _WebViewExampleState extends State<WebViewExample> with SingleTickerProviderStateMixin {
+class _WebViewExampleState extends State<WebViewExample>
+    with SingleTickerProviderStateMixin {
   late final WebViewController _controller;
   late AnimationController _animationController;
   bool _isLoggingIn = false;
   bool _isPageLoading = true;
   Timer? _loadingTimeout;
-  
+
   final FCMService _fcmService = FCMService();
   late NotificationHandler _notificationHandler;
 
   static const platform = MethodChannel('com.asetq_apps/file_chooser');
-  static const String androidClientId =
-      '884256332175-ainljh42sjc4uad0l1i6qmmahpadrlns.apps.googleusercontent.com';
   static const String appUrl = 'https://aset.pncr-tech.com/';
 
-  final GoogleSignIn _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+  late GoogleSignIn _googleSignIn;
 
   bool _isForumSyncInjected = false;
   bool _isFCMTokenSent = false;
@@ -133,20 +119,27 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
   Timer? _navigationDebounce;
   String _lastNavigatedUrl = '';
 
+  // ✅ Track if FCM listeners are already set
+  bool _fcmListenersInitialized = false;
+
   @override
   void initState() {
     super.initState();
-    
+
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
+
+    _initializeGoogleSignIn();
     _initWebView();
     _startLoadingTimeout();
     _initializeFCM();
-    // ❌ REMOVED: _setupNotificationHandlers() - INI YANG BIKIN DOUBLE!
-    // FCMService sudah handle semua notification events
+  }
+
+  void _initializeGoogleSignIn() {
+    _googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
+    debugPrint('✅ GoogleSignIn initialized');
   }
 
   @override
@@ -160,8 +153,7 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
 
   void _startLoadingTimeout() {
     _loadingTimeout = Timer(const Duration(seconds: 10), () {
-      if (_isPageLoading) {
-        debugPrint('⏱️ Loading timeout - force hide splash');
+      if (mounted && _isPageLoading) {
         setState(() => _isPageLoading = false);
       }
     });
@@ -169,75 +161,52 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
 
   Future<void> _initializeFCM() async {
     try {
-      debugPrint('🚀 Initializing FCM...');
-      
-      await Future.delayed(const Duration(seconds: 2));
-      
-      // ✅ FCMService akan setup SEMUA notification listeners (foreground, background, terminated)
       await _fcmService.initialize();
-      
       _notificationHandler = NotificationHandler(_controller);
-      
-      // ✅ Setup callback untuk notification tap dari FCMService
-      _fcmService.setOnMessageTapCallback((message) {
-        _notificationHandler.handleNotificationTap(message);
-      });
-      
-      // ✅ Setup handler untuk onMessageOpenedApp (app dari background)
-      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        debugPrint('🔔 App opened from BACKGROUND tap');
-        _notificationHandler.handleNotificationTap(message);
-      });
-      
-      // ✅ Setup handler untuk getInitialMessage (app dari terminated)
-      FirebaseMessaging.instance.getInitialMessage().then((RemoteMessage? message) {
-        if (message != null) {
-          debugPrint('🔔 App opened from TERMINATED tap');
+
+      // ✅ ONLY set callback ONCE - no duplicate listeners
+      if (!_fcmListenersInitialized) {
+        _fcmService.setOnMessageTapCallback((message) {
+          debugPrint('📱 Notification tapped in main');
           _notificationHandler.handleNotificationTap(message);
-        }
-      });
-      
-      debugPrint('✅ FCM initialized successfully');
-      
+        });
+        _fcmListenersInitialized = true;
+      }
+
+      // ✅ Check for initial message (app opened from terminated state)
+      // This should be called ONLY ONCE
+      await _fcmService.checkInitialMessage();
+
+      debugPrint('✅ FCM initialized in main');
     } catch (e) {
-      debugPrint('❌ FCM initialization error: $e');
+      debugPrint('⚠️ FCM Init Error: $e');
     }
   }
 
   Future<void> _checkAndSendFCMToken() async {
     _fcmCheckDebounce?.cancel();
-    
+
     _fcmCheckDebounce = Timer(const Duration(milliseconds: 500), () async {
       try {
-        await Future.delayed(const Duration(milliseconds: 800));
-        
         final userId = await _controller.runJavaScriptReturningResult(
-          "localStorage.getItem('user_id')"
+          "localStorage.getItem('user_id')",
         );
-        
+
         final userIdStr = userId.toString().replaceAll('"', '');
-        
+
         if (userIdStr.isNotEmpty && userIdStr != 'null') {
           if (_lastCheckedUserId == userIdStr && _isFCMTokenSent) {
-            debugPrint('⚡ Skipping FCM check - already sent for user: $userIdStr');
             return;
           }
-          
-          debugPrint('✅ User logged in: $userIdStr');
 
           _fcmService.setUserId(userIdStr);
-          
+
           final accessToken = await _controller.runJavaScriptReturningResult(
-            "localStorage.getItem('access_token')"
+            "localStorage.getItem('access_token')",
           );
-          
-          final communityState = await _controller.runJavaScriptReturningResult(
-            "localStorage.getItem('userHasJoinedCommunity')"
-          );
-          
+
           final tokenStr = accessToken.toString().replaceAll('"', '');
-          final communityStateStr = communityState.toString().replaceAll('"', '');
-          
+
           await _controller.runJavaScript('''
             (function() {
               window.currentUserId = $userIdStr;
@@ -247,26 +216,18 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
               const cachedCommunityState = localStorage.getItem('userHasJoinedCommunity');
               if (cachedCommunityState) {
                 window.userHasJoinedAnyCommunity = cachedCommunityState === 'true';
-                console.log('✅ Loaded community state from localStorage:', window.userHasJoinedAnyCommunity);
               }
-              
-              console.log('✅ Session injected - user ID:', window.currentUserId);
             })();
           ''');
-          
-          debugPrint('🔵 Community state from localStorage: $communityStateStr');
-          
+
           await _fcmService.sendTokenToBackend(userIdStr);
-          
+
           _lastCheckedUserId = userIdStr;
           _isFCMTokenSent = true;
-          
         } else {
-          debugPrint('⚠️ User not logged in yet');
-          
           _lastCheckedUserId = null;
           _isFCMTokenSent = false;
-          
+
           await _controller.runJavaScript('''
             (function() {
               window.currentUserId = null;
@@ -277,7 +238,7 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
           ''');
         }
       } catch (e) {
-        debugPrint('⚠️ Could not check user login status: $e');
+        debugPrint('⚠️ FCM Token Check Error: $e');
       }
     });
   }
@@ -296,18 +257,16 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
       ..setBackgroundColor(Colors.white);
 
     if (_controller.platform is AndroidWebViewController) {
-      AndroidWebViewController.enableDebugging(true);
-      final androidController = _controller.platform as AndroidWebViewController;
+      AndroidWebViewController.enableDebugging(false);
+      final androidController =
+          _controller.platform as AndroidWebViewController;
       androidController.setMediaPlaybackRequiresUserGesture(false);
       androidController.setOnShowFileSelector(_androidFilePicker);
       androidController.enableZoom(false);
-      
+
       androidController.setGeolocationPermissionsPromptCallbacks(
         onShowPrompt: (request) async {
-          return GeolocationPermissionsResponse(
-            allow: true,
-            retain: true,
-          );
+          return GeolocationPermissionsResponse(allow: true, retain: true);
         },
       );
     }
@@ -316,38 +275,37 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
       NavigationDelegate(
         onPageStarted: (url) {
           if (_lastNavigatedUrl != url) {
-            debugPrint('🔄 Page started: $url');
             _lastNavigatedUrl = url;
+            // ✅ Reset injection flag when navigating to new page
+            _isForumSyncInjected = false;
           }
-          
-          if (_isPageLoading) {
+
+          if (!_isPageLoading && mounted) {
             setState(() => _isPageLoading = true);
           }
         },
         onPageFinished: (url) {
-          if (_lastNavigatedUrl != url) {
-            debugPrint('✅ Page finished: $url');
-          }
-          
           _loadingTimeout?.cancel();
-          setState(() => _isPageLoading = false);
-          
+          if (mounted) {
+            setState(() => _isPageLoading = false);
+          }
+
           if (!_isFCMTokenSent) {
             _checkAndSendFCMToken();
           }
-          
-          if (!_isForumSyncInjected) {
-            _injectForumSyncScript();
-            _isForumSyncInjected = true;
-          }
+
+          // ✅ Always inject scripts on page finish (not just once)
+          _injectForumSyncScript();
+          _isForumSyncInjected = true;
         },
         onWebResourceError: (error) {
-          debugPrint('❌ Error: ${error.description}');
           _loadingTimeout?.cancel();
-          setState(() => _isPageLoading = false);
+          if (mounted) {
+            setState(() => _isPageLoading = false);
+          }
         },
         onProgress: (progress) {
-          if (progress >= 90 && _isPageLoading) {
+          if (progress >= 90 && _isPageLoading && mounted) {
             _loadingTimeout?.cancel();
             setState(() => _isPageLoading = false);
           }
@@ -358,7 +316,6 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
     _controller.addJavaScriptChannel(
       'FlutterGoogleAuth',
       onMessageReceived: (JavaScriptMessage message) {
-        debugPrint('📩 Google Auth Message: ${message.message}');
         if (message.message == 'trigger_google_login') {
           _handleGoogleSignIn();
         }
@@ -368,12 +325,10 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
     _controller.addJavaScriptChannel(
       'FlutterFCM',
       onMessageReceived: (JavaScriptMessage message) {
-        debugPrint('📩 FCM Message: ${message.message}');
-        
         try {
           final data = jsonDecode(message.message);
           final action = data['action'];
-          
+
           if (action == 'get_token') {
             final token = _fcmService.token;
             _sendFCMTokenToWeb(token);
@@ -384,7 +339,7 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
             }
           }
         } catch (e) {
-          debugPrint('❌ Error handling FCM message: $e');
+          debugPrint('⚠️ FlutterFCM error: $e');
         }
       },
     );
@@ -392,23 +347,15 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
     _controller.addJavaScriptChannel(
       'FlutterCommunitySync',
       onMessageReceived: (JavaScriptMessage message) {
-        debugPrint('📩 Community Sync Message: ${message.message}');
-        
         try {
           final data = jsonDecode(message.message);
           final action = data['action'];
-          
+
           if (action == 'community_joined') {
-            debugPrint('✅ Community joined detected in Flutter');
-            debugPrint('   Community ID: ${data['community_id']}');
-            
             _refreshCommunityStateInWebDebounced();
-          } else if (action == 'update_community_state') {
-            debugPrint('🔄 Updating community state in Flutter');
-            debugPrint('   Has joined: ${data['has_joined']}');
           }
         } catch (e) {
-          debugPrint('❌ Error handling community sync message: $e');
+          debugPrint('⚠️ FlutterCommunitySync error: $e');
         }
       },
     );
@@ -428,40 +375,30 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
       await _controller.runJavaScript('''
         (function() {
           if (typeof checkUserCommunities === 'function') {
-            console.log('🔄 Calling checkUserCommunities from Flutter...');
             checkUserCommunities();
           }
         })();
       ''');
     } catch (e) {
-      debugPrint('❌ Error refreshing community state: $e');
+      debugPrint('⚠️ Refresh community state error: $e');
     }
   }
 
   Future<void> _injectForumSyncScript() async {
     try {
-      debugPrint('💉 Injecting forum sync script (ONE TIME)...');
-      
       const forumSyncScript = '''
         (function() {
-          if (window.forumSyncInitialized) {
-            console.log('⚠️ Forum sync already initialized, skipping');
-            return;
-          }
-          
-          console.log('✅ Forum Sync Service Loading...');
+          if (window.forumSyncInitialized) return;
 
           window.initializeCommunityStateFromStorage = function() {
             try {
               const cachedState = localStorage.getItem('userHasJoinedCommunity');
               if (cachedState) {
                 window.userHasJoinedAnyCommunityState = cachedState === 'true';
-                console.log('✅ Initialized community state:', window.userHasJoinedAnyCommunityState);
                 return true;
               }
               return false;
             } catch (error) {
-              console.error('❌ Error initializing community state:', error);
               return false;
             }
           };
@@ -469,7 +406,6 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
           window.notifyCommunityStateChange = function(hasJoined, communityId = null) {
             try {
               localStorage.setItem('userHasJoinedCommunity', hasJoined ? 'true' : 'false');
-              console.log('💾 Saved community state:', hasJoined);
 
               if (typeof FlutterCommunitySync !== 'undefined') {
                 FlutterCommunitySync.postMessage(JSON.stringify({
@@ -479,21 +415,15 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
                   timestamp: new Date().toISOString(),
                   user_id: window.currentUserId
                 }));
-                console.log('📤 Notified Flutter about community state change');
               }
-            } catch (error) {
-              console.error('❌ Error notifying community state change:', error);
-            }
+            } catch (error) {}
           };
 
           const originalCheckCommunities = window.checkUserCommunities;
           if (typeof originalCheckCommunities === 'function') {
             window.checkUserCommunities = async function() {
-              console.log('🔵 Enhanced checkUserCommunities called');
               await originalCheckCommunities.apply(this, arguments);
-              
               const hasJoined = localStorage.getItem('userHasJoinedCommunity') === 'true';
-              console.log('🔵 Result - hasJoined:', hasJoined);
               window.notifyCommunityStateChange(hasJoined);
             };
           }
@@ -501,12 +431,10 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
           const cachedState = localStorage.getItem('userHasJoinedCommunity');
           if (cachedState !== null) {
             window.userHasJoinedAnyCommunity = cachedState === 'true';
-            console.log('✅ Set window.userHasJoinedAnyCommunity =', window.userHasJoinedAnyCommunity);
             
             if (typeof updateFABMenu === 'function') {
               setTimeout(() => {
                 updateFABMenu();
-                console.log('✅ FAB menu updated');
               }, 100);
             }
           } else {
@@ -514,47 +442,193 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
           }
 
           window.forumSyncInitialized = true;
-          console.log('✅ Forum Sync Service initialized');
         })();
       ''';
 
       await _controller.runJavaScript(forumSyncScript);
-      debugPrint('✅ Forum sync script injected successfully');
-      
+
+      // ✅ Inject Pull-to-Refresh separately after page is ready
+      await _injectPullToRefresh();
     } catch (e) {
-      debugPrint('❌ Error injecting forum sync script: $e');
+      debugPrint('⚠️ Inject forum sync error: $e');
+    }
+  }
+
+  Future<void> _injectPullToRefresh() async {
+    try {
+      // ✅ Remove global initialization flag - reinject every time
+      final pullToRefreshScript = r'''
+        (function() {
+          // ✅ Remove old listeners and indicator if exists
+          if (window.pullToRefreshCleanup) {
+            window.pullToRefreshCleanup();
+          }
+          
+          var startY = 0;
+          var currentY = 0;
+          var isPulling = false;
+          var refreshIndicator = null;
+          
+          var touchStartHandler = null;
+          var touchMoveHandler = null;
+          var touchEndHandler = null;
+          
+          function createRefreshIndicator() {
+            // Remove old indicator if exists
+            var oldIndicator = document.getElementById('pull-refresh-indicator');
+            if (oldIndicator) {
+              oldIndicator.remove();
+            }
+            
+            refreshIndicator = document.createElement('div');
+            refreshIndicator.id = 'pull-refresh-indicator';
+            refreshIndicator.style.position = 'fixed';
+            refreshIndicator.style.top = '-60px';
+            refreshIndicator.style.left = '50%';
+            refreshIndicator.style.transform = 'translateX(-50%)';
+            refreshIndicator.style.width = '40px';
+            refreshIndicator.style.height = '40px';
+            refreshIndicator.style.background = 'white';
+            refreshIndicator.style.borderRadius = '50%';
+            refreshIndicator.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
+            refreshIndicator.style.display = 'flex';
+            refreshIndicator.style.alignItems = 'center';
+            refreshIndicator.style.justifyContent = 'center';
+            refreshIndicator.style.transition = 'top 0.3s ease';
+            refreshIndicator.style.zIndex = '9999';
+            refreshIndicator.style.fontSize = '24px';
+            refreshIndicator.style.color = '#2196F3';
+            refreshIndicator.innerHTML = '&#8635;';
+            document.body.appendChild(refreshIndicator);
+          }
+          
+          function showRefreshIndicator(progress) {
+            if (!refreshIndicator) createRefreshIndicator();
+            var top = Math.min(progress - 60, 20);
+            refreshIndicator.style.top = top + 'px';
+            
+            var rotation = (progress / 80) * 360;
+            refreshIndicator.style.transform = 'translateX(-50%) rotate(' + rotation + 'deg)';
+          }
+          
+          function hideRefreshIndicator() {
+            if (refreshIndicator) {
+              refreshIndicator.style.top = '-60px';
+              refreshIndicator.style.transform = 'translateX(-50%) rotate(0deg)';
+            }
+          }
+          
+          function triggerRefresh() {
+            if (refreshIndicator) {
+              refreshIndicator.innerHTML = '&#8634;';
+              
+              var styleEl = document.getElementById('refresh-animation');
+              if (!styleEl) {
+                styleEl = document.createElement('style');
+                styleEl.id = 'refresh-animation';
+                styleEl.textContent = '@keyframes spin { from { transform: translateX(-50%) rotate(0deg); } to { transform: translateX(-50%) rotate(360deg); } }';
+                document.head.appendChild(styleEl);
+              }
+              
+              refreshIndicator.style.animation = 'spin 1s linear infinite';
+            }
+            
+            setTimeout(function() {
+              window.location.reload();
+            }, 300);
+          }
+          
+          touchStartHandler = function(e) {
+            if (window.pageYOffset === 0 || document.documentElement.scrollTop === 0) {
+              startY = e.touches[0].pageY;
+              isPulling = true;
+            }
+          };
+          
+          touchMoveHandler = function(e) {
+            if (!isPulling) return;
+            
+            currentY = e.touches[0].pageY;
+            var diff = currentY - startY;
+            
+            if (diff > 0 && (window.pageYOffset === 0 || document.documentElement.scrollTop === 0)) {
+              showRefreshIndicator(diff);
+              
+              if (diff > 10) {
+                e.preventDefault();
+              }
+            }
+          };
+          
+          touchEndHandler = function(e) {
+            if (!isPulling) return;
+            
+            var diff = currentY - startY;
+            
+            if (diff > 80) {
+              triggerRefresh();
+            } else {
+              hideRefreshIndicator();
+            }
+            
+            isPulling = false;
+            startY = 0;
+            currentY = 0;
+          };
+          
+          // Add event listeners
+          document.addEventListener('touchstart', touchStartHandler, { passive: true });
+          document.addEventListener('touchmove', touchMoveHandler, { passive: false });
+          document.addEventListener('touchend', touchEndHandler, { passive: true });
+          
+          // ✅ Cleanup function for re-injection
+          window.pullToRefreshCleanup = function() {
+            document.removeEventListener('touchstart', touchStartHandler);
+            document.removeEventListener('touchmove', touchMoveHandler);
+            document.removeEventListener('touchend', touchEndHandler);
+            
+            if (refreshIndicator && refreshIndicator.parentNode) {
+              refreshIndicator.parentNode.removeChild(refreshIndicator);
+            }
+            refreshIndicator = null;
+          };
+          
+          console.log('✅ Pull-to-refresh initialized');
+        })();
+      ''';
+
+      await _controller.runJavaScript(pullToRefreshScript);
+      debugPrint('✅ Pull-to-refresh injected');
+    } catch (e) {
+      debugPrint('⚠️ Inject pull-to-refresh error: $e');
     }
   }
 
   Future<void> _sendFCMTokenToWeb(String? token) async {
     if (token == null) return;
-    
+
     try {
       await _controller.runJavaScript('''
         (function() {
           window.fcmToken = '$token';
-          console.log('✅ FCM token received from Flutter');
           if (typeof window.onFCMTokenReceived === 'function') {
             window.onFCMTokenReceived('$token');
           }
         })();
       ''');
     } catch (e) {
-      debugPrint('❌ Error sending token to web: $e');
+      debugPrint('⚠️ Send FCM token to web error: $e');
     }
   }
 
   Future<List<String>> _androidFilePicker(FileSelectorParams params) async {
-    debugPrint('🎯 File picker called');
-    
     try {
       final completer = Completer<List<String>>();
-      
+
       const eventChannel = EventChannel('com.asetq_apps/file_result');
       StreamSubscription? subscription;
-      
+
       subscription = eventChannel.receiveBroadcastStream().listen((result) {
-        debugPrint('📥 Received result: $result');
         if (result is String && result.isNotEmpty) {
           completer.complete([result]);
         } else {
@@ -562,9 +636,9 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
         }
         subscription?.cancel();
       });
-      
+
       await platform.invokeMethod('openFileChooser');
-      
+
       final result = await completer.future.timeout(
         const Duration(seconds: 60),
         onTimeout: () {
@@ -572,35 +646,43 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
           return [];
         },
       );
-      
-      debugPrint('✅ File picker result: $result');
+
       return result;
-      
     } catch (e) {
-      debugPrint('❌ File picker error: $e');
+      debugPrint('⚠️ File picker error: $e');
       return [];
     }
   }
 
   Future<void> _handleGoogleSignIn() async {
     if (_isLoggingIn) return;
-    setState(() => _isLoggingIn = true);
-
-    debugPrint('🚀 Starting Google Sign In...');
+    if (mounted) {
+      setState(() => _isLoggingIn = true);
+    }
 
     try {
       await _googleSignIn.signOut();
-      final account = await _googleSignIn.signIn();
+
+      debugPrint('🔵 Starting Google Sign-In...');
+
+      final account = await _googleSignIn.signIn().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw TimeoutException('Google Sign-In timeout');
+        },
+      );
 
       if (account == null) {
-        debugPrint('❌ User cancelled');
-        setState(() => _isLoggingIn = false);
+        debugPrint('⚠️ User cancelled Google Sign-In');
+        if (mounted) {
+          setState(() => _isLoggingIn = false);
+        }
         return;
       }
 
-      debugPrint('✅ Signed in: ${account.email}');
+      debugPrint('✅ Google Sign-In successful: ${account.email}');
 
-      final auth = await account.authentication;
+      await account.authentication;
       final userInfo = {
         'email': account.email,
         'name': account.displayName ?? '',
@@ -608,12 +690,18 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
         'picture': account.photoUrl ?? '',
       };
 
+      debugPrint('🔑 Auth info obtained, sending to backend...');
       await _loginToBackend(userInfo);
+    } on TimeoutException catch (e) {
+      _showError('Login timeout: $e');
+      debugPrint('❌ Timeout Error: $e');
     } catch (e) {
-      debugPrint('❌ Error: $e');
       _showError('Login gagal: $e');
+      debugPrint('❌ Error during sign-in: $e');
     } finally {
-      setState(() => _isLoggingIn = false);
+      if (mounted) {
+        setState(() => _isLoggingIn = false);
+      }
     }
   }
 
@@ -625,7 +713,8 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
 
     request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
 
-    final body = 'email=${Uri.encodeComponent(user['email'])}'
+    final body =
+        'email=${Uri.encodeComponent(user['email'])}'
         '&name=${Uri.encodeComponent(user['name'])}'
         '&sub=${Uri.encodeComponent(user['sub'])}'
         '&picture=${Uri.encodeComponent(user['picture'])}';
@@ -641,16 +730,16 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
     }
 
     await _injectSessionToWeb(data);
-    
+
     final userId = data['user_id'].toString();
-    
+
     _fcmService.setUserId(userId);
     _lastCheckedUserId = userId;
     _isFCMTokenSent = false;
-    
+
     await _fcmService.sendTokenToBackend(userId);
     _isFCMTokenSent = true;
-    
+
     _showSuccess('Login Successful!');
   }
 
@@ -668,9 +757,6 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
         localStorage.setItem('name', '$name');
         localStorage.setItem('login_time', Date.now().toString());
         
-        console.log('✅ Session saved to localStorage');
-        console.log('   user_id:', localStorage.getItem('user_id'));
-        
         sessionStorage.setItem('user_id', '$userId');
         sessionStorage.setItem('access_token', '$accessToken');
         sessionStorage.setItem('name', '$name');
@@ -686,16 +772,28 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
 
   void _showError(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
   void _showSuccess(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.green),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.green));
+  }
+
+  Future<void> _handleRefresh() async {
+    debugPrint('🔄 Pull to refresh triggered...');
+    try {
+      await _controller.reload();
+      await Future.delayed(const Duration(milliseconds: 1000));
+      debugPrint('✅ Page reloaded successfully');
+    } catch (e) {
+      debugPrint('❌ Reload error: $e');
+      _showError('Refresh failed');
+    }
   }
 
   @override
@@ -705,14 +803,19 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
       body: SafeArea(
         child: Stack(
           children: [
+            // ✅ WebView - Full screen, no wrappers blocking scroll
             WebViewWidget(controller: _controller),
-            
+
+            // ✅ Page Loading Splash - Only visible when loading
             if (_isPageLoading)
               Container(
                 color: Colors.white,
                 child: Center(
                   child: FadeTransition(
-                    opacity: Tween<double>(begin: 0.3, end: 1.0).animate(_animationController),
+                    opacity: Tween<double>(
+                      begin: 0.3,
+                      end: 1.0,
+                    ).animate(_animationController),
                     child: Image.asset(
                       'assets/icons/ic_launcher.png',
                       width: 120,
@@ -728,7 +831,8 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
                   ),
                 ),
               ),
-            
+
+            // ✅ Login Loading Overlay - Only when logging in
             if (_isLoggingIn)
               Container(
                 color: Colors.black54,
@@ -741,11 +845,8 @@ class _WebViewExampleState extends State<WebViewExample> with SingleTickerProvid
                       ),
                       SizedBox(height: 16),
                       Text(
-                        'Loading...',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                        ),
+                        'Logging in...',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
                       ),
                     ],
                   ),

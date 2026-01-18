@@ -33,31 +33,21 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
-  # WebView - gunakan versi terbaru
+  # ✅ WebView
   webview_flutter: ^4.9.0
   webview_flutter_android: ^4.10.11
   webview_flutter_wkwebview: ^3.9.4
 
-  # Camera & Image Picker
-  image_picker: ^1.0.5
-  camera: ^0.10.5+5
-  
-  # Location
-  geolocator: ^10.1.0
-  permission_handler: ^11.1.0
-  
-  # Path Provider
-  path_provider: ^2.1.1
-
-  # flutter_inappwebview: ^6.0.0
-  url_launcher: ^6.2.0
+  # ✅ Authentication
   google_sign_in: ^6.2.0
 
-  # Firebase
+  # ✅ Firebase & Messaging
   firebase_core: ^2.24.2
   firebase_messaging: ^14.7.9
-  http: ^1.1.0
   flutter_local_notifications: ^17.0.0
+  
+  # ✅ HTTP Client
+  http: ^1.1.0
 
 dev_dependencies:
   flutter_test:

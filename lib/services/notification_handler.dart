@@ -14,7 +14,6 @@ class NotificationHandler {
 
     final data = message.data;
     final type = data['type'] ?? '';
-    final relatedId = data['related_id'] ?? '';
     final conversationId = data['conversation_id'] ?? '';
     final postId = data['post_id'] ?? '';
     final communityId = data['community_id'] ?? '';
@@ -137,7 +136,9 @@ class NotificationHandler {
 
   /// Parse notification type from data
   static String getNotificationType(Map<String, dynamic> data) {
-    return data['type']?.toString() ?? data['notificationType']?.toString() ?? 'general';
+    return data['type']?.toString() ??
+        data['notificationType']?.toString() ??
+        'general';
   }
 
   /// Get notification page route based on type
